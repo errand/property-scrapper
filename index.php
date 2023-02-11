@@ -92,15 +92,15 @@ function buildTableArray(array $raw_array): Array {
     }
 }
 
-function initScraping(): void {
+function initScraping(): Array {
     $links_array = collectLinksList(ENTER_POINT, SOURCE_LINK_XPATH, SOURCE_DOMAIN);
     $fields = scrapeFields($links_array);
-    buildTableArray($fields);
+    return buildTableArray($fields);
 }
 
 
 print '<pre>';
-print_r($data_array);
+print_r(initScraping());
 print '<pre>';
 
 function scrape($urls, $callback, $errback)
@@ -127,4 +127,4 @@ $_start = microtime(true);
 
 
 //scrape($links_array);
-printf('scraped %d results in %.2f seconds', count($data_array), microtime(true) - $_start);
+//printf('scraped %d results in %.2f seconds', count($data_array), microtime(true) - $_start);
