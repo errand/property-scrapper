@@ -2,6 +2,8 @@
     "require": {
         "guzzlehttp/guzzle": "^7.5",
         "imangazaliev/didom": "^2.0",
-        "symfony/dom-crawler": "^6.2"
+        "symfony/dom-crawler": "^6.2",
+        "openai-php/client": "^0.3.1",
+        "vlucas/phpdotenv": "^5.5"
     }
 }
