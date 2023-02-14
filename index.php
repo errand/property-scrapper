@@ -9,6 +9,10 @@
 require __DIR__ . '/vendor/autoload.php';
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Pool;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Response;
 use DiDom\Document;
 use DiDom\Query;
 use Dotenv\Dotenv;
@@ -38,14 +42,30 @@ const IMAGES_XPATH = "//div[@class='image-gallery-slides']//img/@src";
 const DESCRIPTION_XPATH = "//div[@class='ves8oa-21 bGEqDy']";
 const AREA_XPATH = "//div[@class='row']/div[@class='col-xs sc-1qj7qf1-2 jXJSll'][2]/div[@class='ogfj7g-12 eMSrgc']/div[@class='sc-152o12i-12 jcFPVq informationSpan']/div[2]";
 
+$data_array = [['Title', 'Price', 'Bedrooms', 'Room area', 'Floor', 'Images']];
+
+// First we define our main scraping loop:
+function scrape($urls, $callback)
+{
+    $requests = array_map(function ($url) {
+        return new Request('GET', (string) $url);
+    }, $urls);
+    global $client;
+    $pool = new Pool($client, $requests, [
+        'concurrency' => 5,
+        'fulfilled' => $callback,
+    ]);
+    $pool->promise()->wait();
+}
+
 /**
  * Parse the Entry page to collect the list of the links to visit
  * @param string $url
  * @param string $xpath
  * @param string $domain
- * @return array
+ * @return void
  * */
-function collectLinksList(string $url, string $xpath, string $domain): Array
+function collectLinksList(string $url, string $xpath, string $domain): void
 {
     $document = new Document($url, true);
     $links_array = [];
@@ -55,7 +75,12 @@ function collectLinksList(string $url, string $xpath, string $domain): Array
         foreach ($row_links as $link) {
             array_push($links_array, $domain . $link);
         }
-        return $links_array;
+
+        scrape($links_array, 'scrapeField');
+
+
+        global $data_array;
+        drawTable($data_array);
 
     } catch (\DiDom\Exceptions\InvalidSelectorException $e) {
         print_r($e);
@@ -64,86 +89,68 @@ function collectLinksList(string $url, string $xpath, string $domain): Array
 
 /**
  * Parse each Page from the list and find given fields
- * @param array $links
- * @return array
+ * @param Response $response
+ * @param $index
+ * @return void
  *
- * @throws \GuzzleHttp\Exception\GuzzleException
+ * @throws GuzzleException
  */
-function scrapeFields(array $links): Array
+function scrapeField(Response $response, $index): void
 {
     try {
         $raw_array = [];
+        global $data_array;
 
-        foreach ($links as $link) {
-            global $client;
-            $response = $client->get($link)->getBody()->getContents();
-            $tree = new Document($response);
-            $title = $tree->find(TITLE_SELECTOR);
-            $price = $tree->find(PRICE_XPATH, Query::TYPE_XPATH);
-            $bedrooms = $tree->find(BEDROOM_XPATH, Query::TYPE_XPATH);
-            $area = $tree->find(AREA_XPATH, Query::TYPE_XPATH);
-            $floor = $tree->find(FLOOR_XPATH, Query::TYPE_XPATH);
-            $images = $tree->find(IMAGES_XPATH, Query::TYPE_XPATH);
-            $description = $tree->find(DESCRIPTION_XPATH, Query::TYPE_XPATH);
-            array_push($raw_array, [$title, $price, $bedrooms, $area, $floor, $images, $description]);
-        }
-        return $raw_array;
-    }  catch (\DiDom\Exceptions\InvalidSelectorException $e) {
-        print_r($e);
-    }
-}
+        $result = $response->getBody()->getContents();
+        $tree = new Document($result);
+        $title = $tree->find(TITLE_SELECTOR);
+        $price = $tree->find(PRICE_XPATH, Query::TYPE_XPATH);
+        $bedrooms = $tree->find(BEDROOM_XPATH, Query::TYPE_XPATH);
+        $area = $tree->find(AREA_XPATH, Query::TYPE_XPATH);
+        $floor = $tree->find(FLOOR_XPATH, Query::TYPE_XPATH);
+        $images = $tree->find(IMAGES_XPATH, Query::TYPE_XPATH);
+        $description = $tree->find(DESCRIPTION_XPATH, Query::TYPE_XPATH);
+        array_push($raw_array, [$title, $price, $bedrooms, $area, $floor, $images, $description]);
 
-/**
- * Build Array of all scrapped data ready to export to CSV
- * @param array $raw_array
- * @return array
- * */
-function buildTableArray(array $raw_array): Array
-{
-    try {
+        $openAIClient = OpenAI::client(GPT_TOKEN);
 
-
-        $data_array = [['Title', 'Price', 'Bedrooms', 'Room area', 'Floor', 'Images']];
         foreach ($raw_array as $row) {
+
             $title = $row[0][0] ? $row[0][0]->text() : '';
+            $translated_title = $openAIClient->completions()->create([
+                'model' => 'text-davinci-003',
+                'prompt' => 'Переведи на русский: "' . $title . '"',
+                'max_tokens' => 500
+            ]);
             $price = $row[1][0]? preg_replace("/[^0-9]/", "", $row[1][0]->text()) : '';
             $bedrooms = $row[2][0]? preg_replace("/[^0-9]/", "", $row[2][0]->text()) : '';
             $room_area = $row[3][0]? preg_replace("/(?=\.).*/", "", $row[3][0]->text()) : '';
             $floor = $row[4]? preg_replace("/[^0-9]/", "", $row[4][0]->text()) : '';
             $images = $row[5]? implode(', ', $row[5]): '';
             $description = $row[6]? $row[6][0]->text(): '';
-            /*$client = OpenAI::client(GPT_TOKEN);
-            $translated_description = $client->completions()->create([
+            $translated_description = $openAIClient->completions()->create([
                 'model' => 'text-davinci-003',
                 'prompt' => 'Переведи на русский: "' . $description . '"',
-                'max_tokens' => 200
-            ]);*/
+                'max_tokens' => 2000
+            ]);
+
             array_push($data_array, [
-                $title,
+                $translated_title['choices'][0]['text'],
                 $price,
                 $bedrooms,
                 $room_area,
                 $floor,
                 $images,
-                $description
+                //$description
+                $translated_description['choices'][0]['text']
             ]);
         }
-        return $data_array;
-    } catch (\DiDom\Exceptions\InvalidSelectorException $e) {
+
+    }  catch (\DiDom\Exceptions\InvalidSelectorException $e) {
         print_r($e);
     }
 }
 
-/**
- * Initializiation function
- * @throws \GuzzleHttp\Exception\GuzzleException
- */
-function initScraping(): Array
-{
-    $links_array = collectLinksList(ENTER_POINT, SOURCE_LINK_XPATH, SOURCE_DOMAIN);
-    $fields = scrapeFields($links_array);
-    return buildTableArray($fields);
-}
 
 function drawTable(array $array) {
     if(!is_array($array)) {
@@ -165,10 +172,11 @@ function drawTable(array $array) {
 $_start = microtime(true);
 
 try {
-    $result = initScraping();
-    drawTable($result);
+    collectLinksList(ENTER_POINT, SOURCE_LINK_XPATH, SOURCE_DOMAIN);
+    //$result = initScraping();
+    //drawTable($result);
     //print_r($result);
-} catch (\GuzzleHttp\Exception\GuzzleException $e) {
+} catch (GuzzleException $e) {
 }
 
-//printf('scraped %d results in %.2f seconds', count($result) - 1, microtime(true) - $_start);
+printf('scraped results in %.2f seconds', microtime(true) - $_start);
