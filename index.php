@@ -16,11 +16,14 @@ use GuzzleHttp\Psr7\Response;
 use DiDom\Document;
 use DiDom\Query;
 use Dotenv\Dotenv;
+use Panda\Yandex\TranslateSdk;
 
 $dotenv = Dotenv::createImmutable(__DIR__);
 $dotenv->load();
 
 define('GPT_TOKEN', $_ENV['GPT_API']);
+define('YANDEX_TOKEN', $_ENV['YANDEX_API']);
+define('YANDEX_FOLDER_ID', $_ENV['YANDEX_FOLDER_ID']);
 
 $client = new Client([
     'connect_timeout' => 10,
@@ -112,37 +115,55 @@ function scrapeField(Response $response, $index): void
         $description = $tree->find(DESCRIPTION_XPATH, Query::TYPE_XPATH);
         array_push($raw_array, [$title, $price, $bedrooms, $area, $floor, $images, $description]);
 
-        $openAIClient = OpenAI::client(GPT_TOKEN);
-
+        //$openAIClient = OpenAI::client(GPT_TOKEN);
+        $cloud = new TranslateSdk\Cloud(YANDEX_TOKEN, YANDEX_FOLDER_ID);
         foreach ($raw_array as $row) {
 
             $title = $row[0][0] ? $row[0][0]->text() : '';
-            $translated_title = $openAIClient->completions()->create([
+            $translate_title = new TranslateSdk\Translate($title, 'ru');
+            $response_title = json_decode($cloud->request($translate_title));
+            if ($title) {
+                $translated_title = $response_title->translations[0]->text;
+            } else {
+                $translated_title = '';
+            }
+            /*$translated_title = $openAIClient->completions()->create([
                 'model' => 'text-davinci-003',
                 'prompt' => 'Переведи на русский: "' . $title . '"',
                 'max_tokens' => 500
-            ]);
+            ]);*/
             $price = $row[1][0]? preg_replace("/[^0-9]/", "", $row[1][0]->text()) : '';
             $bedrooms = $row[2][0]? preg_replace("/[^0-9]/", "", $row[2][0]->text()) : '';
             $room_area = $row[3][0]? preg_replace("/(?=\.).*/", "", $row[3][0]->text()) : '';
             $floor = $row[4]? preg_replace("/[^0-9]/", "", $row[4][0]->text()) : '';
             $images = $row[5]? implode(', ', $row[5]): '';
+
             $description = $row[6]? $row[6][0]->text(): '';
-            $translated_description = $openAIClient->completions()->create([
+            $translate_description = new TranslateSdk\Translate($description, 'ru');
+            $response_description = json_decode($cloud->request($translate_description));
+            if($description) {
+                $translated_description = $response_description->translations[0]->text;
+            } else {
+                $translated_description = '';
+
+            }
+
+            /*$translated_description = $openAIClient->completions()->create([
                 'model' => 'text-davinci-003',
                 'prompt' => 'Переведи на русский: "' . $description . '"',
                 'max_tokens' => 2000
-            ]);
+            ]);*/
 
             array_push($data_array, [
-                $translated_title['choices'][0]['text'],
+                //$title,
+                $translated_title,
                 $price,
                 $bedrooms,
                 $room_area,
                 $floor,
                 $images,
-                //$description
-                $translated_description['choices'][0]['text']
+                //$description,
+                $translated_description
             ]);
         }
 
@@ -173,9 +194,10 @@ $_start = microtime(true);
 
 try {
     collectLinksList(ENTER_POINT, SOURCE_LINK_XPATH, SOURCE_DOMAIN);
-    //$result = initScraping();
-    //drawTable($result);
-    //print_r($result);
+    /*$cloud = new TranslateSdk\Cloud(YANDEX_TOKEN, YANDEX_FOLDER_ID);
+    $translate_description = new TranslateSdk\Translate('', 'ru');
+    print_r(json_decode($cloud->request($translate_description))->code);*/
+
 } catch (GuzzleException $e) {
 }
 
